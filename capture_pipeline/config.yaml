@@ -1,0 +1,100 @@
+# =============================================================================
+# Capture Pipeline Configuration
+# =============================================================================
+# This file configures the UE4 -> Blender/glTF/USD reconstruction pipeline.
+#
+# Copy this file and modify paths for your specific project.
+# =============================================================================
+
+# Project metadata
+project:
+  name: "UE4_Scene_Capture"
+  version: "1.0"
+
+# Directory paths (relative to pipeline root)
+paths:
+  captures: "captures"           # Input: .rdc files from RenderDoc
+  export: "export"               # Intermediate: extracted meshes/textures
+  library: "library"             # Deduplicated canonical meshes
+  targets:
+    blender: "targets/blender"   # Output: .blend files
+    gltf: "targets/gltf"         # Output: .glb/.gltf files
+    usd: "targets/usd"           # Output: .usdc files
+  qa: "qa"                       # QA reports and diff images
+
+# Capture settings
+capture:
+  # Default camera JSON (optional - if you have camera data from capture)
+  camera_json: null
+
+  # Expected resolution (for reference)
+  resolution: [1920, 1080]
+
+  # Approximate FOV if not in camera JSON (horizontal degrees)
+  default_fov_deg: 60.0
+
+# Unit and coordinate settings
+units:
+  # UE4 uses centimeters (1 UU = 1 cm)
+  # Blender uses meters by default
+  # Scale factor: 0.01 converts UE4 cm to Blender m
+  scale_factor: 0.01
+
+  # Set to true if your UE4 scene uses standard units
+  ue4_uses_cm: true
+
+# Baking settings
+bake:
+  # Texture resolution for baked BaseColor
+  resolution: 2048
+
+  # UV projection settings
+  uv_margin: 0.02
+  uv_angle_limit: 66.0
+
+  # Skip baking if no color image available
+  skip_if_no_color: true
+
+# Export settings
+export:
+  # glTF settings
+  gltf:
+    format: "GLB"           # GLB (binary) or GLTF_SEPARATE
+    embed_textures: true    # Embed textures in GLB
+    use_unlit: false        # Use KHR_materials_unlit extension
+
+  # USD settings
+  usd:
+    format: "usdc"          # usdc (binary) or usda (ASCII)
+    export_textures: true
+
+# QA thresholds
+qa:
+  # Silhouette IoU threshold (edge-based geometry match)
+  # >= 0.92 is considered good alignment
+  silhouette_iou_threshold: 0.92
+
+  # SSIM threshold (structural similarity)
+  # >= 0.80 is acceptable for baked colors
+  ssim_threshold: 0.80
+
+  # Geometry sanity bounds (meters after scale)
+  max_aabb_extent: 10000.0
+
+# Tool paths (adjust if not in PATH)
+tools:
+  blender: "blender"
+  renderdoccmd: "renderdoccmd"
+  python: "python"
+
+# Processing options
+processing:
+  # Merge very small meshes (< N vertices) into one
+  merge_small_meshes: true
+  small_mesh_threshold: 100
+
+  # Conservative deduplication
+  dedupe_enabled: true
+
+  # LOD handling: keep highest-poly when duplicates at same location
+  lod_filter_enabled: true

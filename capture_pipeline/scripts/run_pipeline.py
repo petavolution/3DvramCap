@@ -7,13 +7,22 @@ Orchestrates the full capture-to-export pipeline.
 Usage:
     python run_pipeline.py --capture scene_01.rdc
     python run_pipeline.py --all               # Process all .rdc files
+    python run_pipeline.py --ninja-ripper DIR  # Convert Ninja Ripper .rip files
+    python run_pipeline.py --depth-capture DIR # Process ReShade depth captures
 
 This script coordinates:
     1. RenderDoc extraction (requires RenderDoc environment)
     2. Mesh deduplication
-    3. Blender import and baking
-    4. glTF/USD export
-    5. QA validation
+    3. Texture processing (DDS decompression, PBR classification)
+    4. Blender import and baking
+    5. glTF/USD export
+    6. Export validation
+    7. QA validation
+
+Additional tools:
+    - Ninja Ripper conversion (DX9 fallback)
+    - ReShade depth reconstruction
+    - DDS texture utilities
 
 Note: Step 1 (RenderDoc extraction) must be run inside RenderDoc's Python
 environment. This script will generate the commands to run.
@@ -33,6 +42,27 @@ try:
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
+
+try:
+    from logging_utils import setup_logging, get_logger, StepLogger
+    HAS_LOGGING = True
+except ImportError:
+    HAS_LOGGING = False
+    # Fallback simple logger
+    class SimpleLogger:
+        def info(self, msg, **kwargs): print(f"[INFO] {msg}")
+        def warning(self, msg, **kwargs): print(f"[WARN] {msg}")
+        def error(self, msg, **kwargs): print(f"[ERROR] {msg}")
+        def debug(self, msg, **kwargs): pass
+    def get_logger(name): return SimpleLogger()
+    def setup_logging(**kwargs): pass
+    class StepLogger:
+        def __init__(self, name, logger=None): self.name = name
+        def start(self, msg=None): print(f"[START] {self.name}")
+        def success(self, msg=None, **kw): print(f"[OK] {msg or self.name}")
+        def failure(self, msg=None, **kw): print(f"[FAIL] {msg or self.name}")
+        def __enter__(self): self.start(); return self
+        def __exit__(self, *args): pass
 
 
 def load_config(config_path):
@@ -225,6 +255,10 @@ def run_pipeline(config, capture_file=None, dry_run=False):
         if not run_command(cmd, "Blender Import and Bake", dry_run):
             continue
 
+        # Step 3.5: Texture Processing (DDS decompression, classification)
+        if os.path.exists(tex_dir):
+            run_texture_processing(config, tex_dir, dry_run)
+
         # Step 4: Export glTF and USD
         cmd = [
             tools["blender"], "-b", blend_path,
@@ -240,7 +274,11 @@ def run_pipeline(config, capture_file=None, dry_run=False):
         if not run_command(cmd, "glTF/USD Export", dry_run):
             continue
 
-        # Step 5: QA Validation (if reference available)
+        # Step 5: Export Validation
+        targets_dir = os.path.dirname(gltf_path)
+        run_export_validation(config, targets_dir, dry_run)
+
+        # Step 6: QA Validation (if reference available)
         ref_image = color_image if os.path.exists(color_image) else None
         if ref_image:
             # For full QA, we'd need to render from Blender first
@@ -248,7 +286,7 @@ def run_pipeline(config, capture_file=None, dry_run=False):
             report_path = os.path.join(paths["qa"], f"{capture_name}_report.json")
 
             print("\n" + "="*60)
-            print("Step 5: QA Validation")
+            print("Step 6: QA Validation")
             print("="*60)
             print(f"To run full validation, render from Blender and run:")
             print(f"  python {get_script_path('05_qa_validate.py')} \\")
@@ -266,6 +304,111 @@ def run_pipeline(config, capture_file=None, dry_run=False):
     return True
 
 
+def run_ninja_ripper(config, input_dir, dry_run=False):
+    """
+    Run Ninja Ripper conversion for DX9 fallback captures.
+    """
+    logger = get_logger("pipeline")
+    tools = config["tools"]
+    paths = config["paths"]
+
+    output_dir = os.path.join(paths["export"], "ninja_rip", "Meshes")
+
+    with StepLogger("ninja_ripper_conversion", logger) as step:
+        cmd = [
+            tools["python"],
+            get_script_path("07_ninja_ripper_convert.py"),
+            "--input", input_dir,
+            "--output", output_dir,
+            "--min-vertices", "50"
+        ]
+
+        if run_command(cmd, "Ninja Ripper Conversion", dry_run):
+            step.success(f"Converted .rip files to {output_dir}")
+            return True
+        else:
+            step.failure("Ninja Ripper conversion failed")
+            return False
+
+
+def run_depth_capture(config, input_dir, dry_run=False):
+    """
+    Run ReShade depth capture reconstruction.
+    """
+    logger = get_logger("pipeline")
+    tools = config["tools"]
+    paths = config["paths"]
+
+    output_dir = os.path.join(paths["export"], "depth_capture")
+
+    with StepLogger("depth_reconstruction", logger) as step:
+        cmd = [
+            tools["python"],
+            get_script_path("06_depth_reconstruction.py"),
+            "--input", input_dir,
+            "--output", output_dir,
+            "--method", "poisson"
+        ]
+
+        if run_command(cmd, "Depth Reconstruction", dry_run):
+            step.success(f"Reconstructed depth captures to {output_dir}")
+            return True
+        else:
+            step.failure("Depth reconstruction failed")
+            return False
+
+
+def run_texture_processing(config, tex_dir, dry_run=False):
+    """
+    Process textures: DDS decompression and PBR classification.
+    """
+    logger = get_logger("pipeline")
+    tools = config["tools"]
+
+    with StepLogger("texture_processing", logger) as step:
+        cmd = [
+            tools["python"],
+            get_script_path("08_texture_utils.py"),
+            "--input", tex_dir,
+            "--output", tex_dir,
+            "--decompress",
+            "--classify"
+        ]
+
+        if run_command(cmd, "Texture Processing", dry_run):
+            step.success(f"Processed textures in {tex_dir}")
+            return True
+        else:
+            step.failure("Texture processing failed")
+            return False
+
+
+def run_export_validation(config, export_dir, dry_run=False):
+    """
+    Validate exported glTF and USD files.
+    """
+    logger = get_logger("pipeline")
+    tools = config["tools"]
+    paths = config["paths"]
+
+    report_path = os.path.join(paths["qa"], "validation_report.json")
+
+    with StepLogger("export_validation", logger) as step:
+        cmd = [
+            tools["python"],
+            get_script_path("09_validate_exports.py"),
+            "--all", export_dir,
+            "--output", report_path
+        ]
+
+        if run_command(cmd, "Export Validation", dry_run):
+            step.success(f"Validation report: {report_path}")
+            return True
+        else:
+            step.failure("Export validation failed")
+            return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run the UE4 scene capture reconstruction pipeline"
@@ -280,6 +423,21 @@ def main():
         help="Process all .rdc files in captures directory"
     )
     parser.add_argument(
+        "--ninja-ripper",
+        metavar="DIR",
+        help="Convert Ninja Ripper .rip files from directory"
+    )
+    parser.add_argument(
+        "--depth-capture",
+        metavar="DIR",
+        help="Process ReShade depth captures from directory"
+    )
+    parser.add_argument(
+        "--validate",
+        metavar="DIR",
+        help="Validate exports in directory"
+    )
+    parser.add_argument(
         "--config",
         default="config.yaml",
         help="Path to configuration file (default: config.yaml)"
@@ -289,13 +447,18 @@ def main():
         action="store_true",
         help="Print commands without executing"
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging"
+    )
 
     args = parser.parse_args()
 
-    if not args.capture and not args.all:
-        print("Error: Specify --capture FILE or --all")
-        parser.print_help()
-        sys.exit(1)
+    # Setup logging
+    log_level = "DEBUG" if args.verbose else "INFO"
+    setup_logging(level=log_level)
+    logger = get_logger("pipeline")
 
     # Find config file
     config_path = args.config
@@ -305,6 +468,27 @@ def main():
         config_path = str(script_dir / "config.yaml")
 
     config = load_config(config_path)
+
+    # Handle different modes
+    if args.ninja_ripper:
+        logger.info(f"Running Ninja Ripper conversion: {args.ninja_ripper}")
+        run_ninja_ripper(config, args.ninja_ripper, args.dry_run)
+        return
+
+    if args.depth_capture:
+        logger.info(f"Running depth capture reconstruction: {args.depth_capture}")
+        run_depth_capture(config, args.depth_capture, args.dry_run)
+        return
+
+    if args.validate:
+        logger.info(f"Running export validation: {args.validate}")
+        run_export_validation(config, args.validate, args.dry_run)
+        return
+
+    if not args.capture and not args.all:
+        print("Error: Specify --capture FILE, --all, --ninja-ripper DIR, --depth-capture DIR, or --validate DIR")
+        parser.print_help()
+        sys.exit(1)
 
     run_pipeline(config, args.capture, args.dry_run)
 

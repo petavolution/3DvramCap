@@ -46,6 +46,12 @@ python run_core.py --scene export/my_scene/
 | `core_depth.py` | ReShade depth buffer integration |
 | `core_quality.py` | Quality metrics and validation reporting |
 | `core_batch.py` | Batch processing with human checkpoints |
+| `core_config.py` | Unified configuration management |
+| `core_logging.py` | Structured JSON logging |
+| `core_database.py` | SQLite asset tracking |
+| `core_library.py` | Asset library management |
+| `core_cli.py` | Unified command-line interface |
+| `core_presets.py` | Export preset definitions |
 
 ## Pipeline Steps
 
@@ -315,4 +321,189 @@ print(f"glTF valid: {status['has_gltf']}")
                         │  core_quality     │
                         │   (Validation)    │
                         └───────────────────┘
+```
+
+## Infrastructure Modules
+
+### Unified CLI (`core_cli.py`)
+```bash
+# Initialize a new project
+python -m core_cli init my_project --profile quality
+
+# Extract from RenderDoc capture
+python -m core_cli extract scene.rdc --output export/
+
+# Batch process multiple captures with checkpoints
+python -m core_cli batch captures/ --auto-approve --report batch_report.html
+
+# Manage asset library
+python -m core_cli library import --type meshes export/meshes/
+python -m core_cli library search --pattern "building*" --has-uvs
+
+# Export with direct export (no Blender)
+python -m core_cli export library/ --gltf scene.glb --direct
+
+# Show pipeline status
+python -m core_cli status
+```
+
+### Configuration (`core_config.py`)
+```python
+from core_config import Config, get_config, load_config
+
+# Load default config
+config = get_config()
+
+# Apply a profile
+config.apply_profile("quality")  # quality, fast, minimal, debug
+
+# Access settings
+print(config.processing.scale_factor)
+print(config.export.use_unlit)
+
+# Create and save config
+config = Config()
+config.paths.output_dir = "my_export"
+config.processing.decimate = True
+config.save("pipeline.json")
+```
+
+### Structured Logging (`core_logging.py`)
+```python
+from core_logging import init_logging, get_logger, TaskLogger
+
+# Initialize logging
+init_logging(log_dir="logs", level="INFO", format="json")
+
+# Basic logging with context
+logger = get_logger("extraction")
+logger.info("Starting extraction", capture="scene.rdc", mesh_count=150)
+
+# Task-scoped logging with timing
+with TaskLogger("process_capture", capture_id="123") as task:
+    task.info("Processing started")
+    task.progress(50, "Halfway done")
+    task.info("Processing complete")
+# Automatically logs duration on exit
+```
+
+### Asset Database (`core_database.py`)
+```python
+from core_database import get_database, CaptureStatus
+
+db = get_database("pipeline.db")
+
+# Track a capture
+capture_id = db.add_capture("scene", "/path/to/scene.rdc")
+db.update_capture_status(capture_id, CaptureStatus.EXTRACTING)
+
+# Track meshes with deduplication
+mesh_id = db.add_mesh("mesh_001", capture_id,
+                      geometry_hash="abc123",
+                      vertex_count=1500)
+
+# Find duplicates
+existing = db.find_canonical_mesh("abc123")
+if existing:
+    db.mark_as_duplicate(mesh_id, existing.id)
+
+# Get statistics
+stats = db.get_stats()
+print(f"Unique meshes: {stats['unique_meshes']}")
+```
+
+### Asset Library (`core_library.py`)
+```python
+from core_library import AssetLibrary
+
+library = AssetLibrary("library/")
+
+# Import meshes from extraction output
+results = library.import_meshes("export/meshes/",
+                                source_capture="scene.rdc",
+                                tags=["environment"])
+
+# Search assets
+meshes = library.search_meshes(
+    name_pattern="building.*",
+    vertex_count_min=1000,
+    has_uvs=True
+)
+
+# Create export set for selective export
+library.create_export_set("hero_props",
+                         mesh_ids=[m.id for m in meshes],
+                         export_config={"quality": "high"})
+
+# Export subset
+library.export_meshes("output/", mesh_ids=["mesh_abc123"])
+```
+
+### Export Presets (`core_presets.py`)
+```python
+from core_presets import get_preset, list_presets, create_custom_preset
+
+# List available presets
+print(list_presets())
+# ['web_optimized', 'web_draft', 'unity', 'unreal', 'blender', 'threejs', 'godot', 'archive']
+
+# Get a preset
+preset = get_preset("web_optimized")
+print(preset.textures.max_size)  # 1024
+print(preset.formats.gltf_draco)  # True
+
+# Create custom preset based on existing
+custom = create_custom_preset(
+    "my_project",
+    base="web_optimized",
+    textures__max_size=2048,
+    meshes__decimate=False
+)
+custom.save("presets/my_project.json")
+```
+
+## Complete Workflow Example
+
+```python
+from core_config import Config
+from core_logging import init_logging, TaskLogger
+from core_database import get_database
+from core_library import AssetLibrary
+from core_batch import BatchProcessor, BatchConfig
+from core_quality import assess_scene_quality
+from core_presets import get_preset
+
+# 1. Initialize
+init_logging(format="text", level="INFO")
+config = Config()
+config.apply_profile("quality")
+db = get_database()
+
+# 2. Batch process captures
+batch_config = BatchConfig(
+    checkpoint_after_extract=True,
+    checkpoint_before_export=True,
+    auto_approve_timeout=60
+)
+
+processor = BatchProcessor(batch_config)
+processor.add_captures_from_directory("captures/")
+results = processor.run()
+
+# 3. Import to library
+library = AssetLibrary("library/")
+for task_id, result in results.items():
+    if result.status.value == "completed":
+        library.import_meshes(f"work/{task_id}/deduplicated/",
+                             source_capture=task_id)
+
+# 4. Quality check
+report = assess_scene_quality("export/")
+report.to_html("quality_report.html")
+if report.metrics.score < 70:
+    print("Quality below threshold!")
+
+# 5. Export with preset
+preset = get_preset("web_optimized")
+# Apply preset settings to export...
 ```

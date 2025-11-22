@@ -34,6 +34,29 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Import logging utilities
+try:
+    from core.utils import logger, log_error, log_section, timed, start_session, end_session
+    HAS_LOGGING = True
+except ImportError:
+    HAS_LOGGING = False
+    # Fallback simple logging
+    class SimpleLogger:
+        def info(self, msg): print(f"[INFO] {msg}")
+        def debug(self, msg): pass
+        def warning(self, msg): print(f"[WARN] {msg}")
+        def error(self, msg): print(f"[ERROR] {msg}")
+    logger = SimpleLogger()
+    def log_error(msg, **kw): print(f"[ERROR] {msg}")
+    def log_section(title): print(f"\n{'='*60}\n{title}\n{'='*60}")
+    def timed(op):
+        from contextlib import contextmanager
+        @contextmanager
+        def dummy(): yield
+        return dummy()
+    def start_session(name=None): return "session"
+    def end_session(sid, success=True): pass
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -79,24 +102,32 @@ def load_config(config_path: str = None) -> dict:
 
 def run_command(cmd: list, description: str, dry_run: bool = False) -> bool:
     """Run a shell command with logging."""
-    print(f"\n{'='*60}")
-    print(f"STEP: {description}")
-    print(f"{'='*60}")
-    print(f"$ {' '.join(str(c) for c in cmd)}")
+    log_section(f"STEP: {description}")
+    cmd_str = ' '.join(str(c) for c in cmd)
+    logger.debug(f"Command: {cmd_str}")
+    print(f"$ {cmd_str}")
 
     if dry_run:
-        print("[DRY RUN] Skipped")
+        logger.info("[DRY RUN] Skipped")
         return True
 
     try:
-        result = subprocess.run(cmd, check=True)
-        print(f"[OK] {description}")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info(f"[OK] {description}")
+        if result.stdout:
+            logger.debug(f"stdout: {result.stdout[:500]}")
         return True
     except subprocess.CalledProcessError as e:
+        log_error(f"{description} failed", context={
+            'exit_code': e.returncode,
+            'stderr': e.stderr[:500] if e.stderr else 'none'
+        })
         print(f"[FAIL] {description}: exit code {e.returncode}")
+        if e.stderr:
+            print(e.stderr)
         return False
     except FileNotFoundError as e:
-        print(f"[ERROR] Command not found: {e}")
+        log_error(f"Command not found: {cmd[0]}", exception=e)
         return False
 
 
@@ -304,30 +335,42 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    config = load_config(getattr(args, 'config', None))
+    # Start session for logging
+    session_id = start_session(f"pipeline_{args.command}")
+    success = False
 
-    if args.command == 'run':
-        success = cmd_run_pipeline(args.scene_dir, args.targets, config)
-        sys.exit(0 if success else 1)
+    try:
+        config = load_config(getattr(args, 'config', None))
 
-    elif args.command == 'extract-cmd':
-        cmd_extract_show(args.rdc_file, args.out)
+        if args.command == 'run':
+            success = cmd_run_pipeline(args.scene_dir, args.targets, config)
 
-    elif args.command == 'process':
-        success = cmd_process(args.input_dir, args.out, config)
-        sys.exit(0 if success else 1)
+        elif args.command == 'extract-cmd':
+            cmd_extract_show(args.rdc_file, args.out)
+            success = True
 
-    elif args.command == 'export':
-        if not args.gltf and not args.usd and not args.blend:
-            print("ERROR: Specify at least one output: --gltf, --usd, or --blend")
-            sys.exit(1)
-        success = cmd_export_blender(args.mesh_dir, args.color,
-                                     args.gltf, args.usd, args.blend, config)
-        sys.exit(0 if success else 1)
+        elif args.command == 'process':
+            success = cmd_process(args.input_dir, args.out, config)
 
-    elif args.command == 'validate':
-        success = cmd_validate(args.path)
-        sys.exit(0 if success else 1)
+        elif args.command == 'export':
+            if not args.gltf and not args.usd and not args.blend:
+                logger.error("Specify at least one output: --gltf, --usd, or --blend")
+                success = False
+            else:
+                success = cmd_export_blender(args.mesh_dir, args.color,
+                                             args.gltf, args.usd, args.blend, config)
+
+        elif args.command == 'validate':
+            success = cmd_validate(args.path)
+
+    except Exception as e:
+        log_error(f"Pipeline failed with exception", exception=e)
+        success = False
+
+    finally:
+        end_session(session_id, success=success)
+
+    sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':

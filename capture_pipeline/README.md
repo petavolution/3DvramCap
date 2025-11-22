@@ -1,255 +1,140 @@
-# UE4 Scene Capture and Reconstruction Pipeline
+# 3DvramCap - GPU VRAM Capture Pipeline
 
-A robust, minimal-error pipeline for capturing UE4 game scenes and reconstructing
-them in Blender, with export to glTF 2.0 and USD formats.
+Extract 3D scene geometry from UE4 games via RenderDoc, export to glTF 2.0 and USD.
 
-## Quick Start (First Test)
-
-### Prerequisites
-
-1. **RenderDoc** (1.25+) - [Download](https://renderdoc.org/)
-2. **Blender** (3.x+) - [Download](https://blender.org/)
-3. **Universal Unreal Unlocker (UUU)** - For UE4 games - [Download](https://framedsc.com/GeneralGuides/universal_ue4_consoleunlocker.htm)
-4. **Python** (3.8+) with packages:
-   ```bash
-   pip install numpy trimesh opencv-python PyYAML
-   ```
-
-### Step-by-Step First Test
-
-#### 1. Capture a Frame
+## Quick Start
 
 ```bash
-# Launch your UE4 game through RenderDoc
-# OR attach RenderDoc to running game
+# 1. Show extraction command (run in RenderDoc environment)
+python pipeline.py extract-cmd captures/scene.rdc
 
-# Once in-game:
-# - Use UUU to freeze time (timestop) and enable free camera
-# - Position camera at desired view
-# - Press F12 to capture a frame
-# - Save the .rdc file to captures/ folder
+# 2. Run full pipeline (after extraction)
+python pipeline.py run export/scene/
+
+# Or use shell script
+./run_all.sh scene
 ```
 
-#### 2. Extract from RenderDoc (Manual)
+## Prerequisites
 
-Open RenderDoc with your .rdc capture:
+- **RenderDoc** (1.25+) - [Download](https://renderdoc.org/)
+- **Blender** (3.x+) - [Download](https://blender.org/)
+- **Python** (3.8+) with: `pip install numpy`
 
-1. Go to last event in Event Browser
-2. In Texture Viewer, save final color as `captures/final.png`
-3. For a few big draw calls (walls, floor):
-   - Open Mesh Viewer
-   - Select "Post-VS" view
-   - Export Mesh → OBJ → save to `export/Meshes/`
+## Pipeline Usage
 
-#### 3. Run the Pipeline
+### Unified Entry Point
+
+All operations through `pipeline.py`:
 
 ```bash
-# Deduplicate meshes
-python scripts/02_dedupe_meshes.py export/Meshes library/index.json
+# Show RenderDoc extraction command
+python pipeline.py extract-cmd captures/scene.rdc
 
-# Import to Blender and bake
-blender -b --python scripts/03_blender_import_bake.py -- \
-  --meshes library/meshes \
-  --color captures/final.png \
-  --out targets/blender/scene.blend
+# Run full pipeline on extracted scene
+python pipeline.py run export/my_scene/ --targets targets/
 
-# Export to glTF and USD
-blender -b targets/blender/scene.blend --python scripts/04_blender_export.py -- \
-  --gltf targets/gltf/scene.glb \
-  --usd targets/usd/scene.usdc
+# Individual steps
+python pipeline.py process export/Meshes/ --out library/
+python pipeline.py export library/ --gltf scene.glb --usd scene.usdc
+python pipeline.py validate targets/gltf/
 ```
 
-#### 4. Verify Results
+### Pipeline Flow
 
-Open `targets/blender/scene.blend` in Blender to check:
-- Meshes are visible and aligned
-- Scale looks reasonable (1 Blender unit ≈ 1 meter)
-- Baked colors appear on geometry
+```
+1. CAPTURE     Game + RenderDoc → .rdc file
+2. EXTRACT     RenderDoc Python → OBJ meshes + textures
+3. PROCESS     Deduplicate meshes
+4. EXPORT      Blender → glTF/USD
+5. VALIDATE    Check output integrity
+```
 
 ## Project Structure
 
 ```
 capture_pipeline/
-├── captures/              # Input: .rdc files, reference images
-├── export/                # Intermediate: extracted meshes/textures
-│   └── <capture_name>/
-│       ├── Meshes/        # Post-VS OBJ files
-│       ├── Textures/      # final.png, gbuffer_*.png
-│       └── scene.json     # Extraction index
-├── library/               # Deduplicated canonical meshes
-│   └── meshes/
-├── scene/                 # Canonical scene files
-├── targets/
-│   ├── blender/           # .blend files
-│   ├── gltf/              # .glb/.gltf exports
-│   └── usd/               # .usdc exports
-├── qa/                    # Validation reports
-├── scripts/               # Python scripts
-│   ├── 01_extract_from_rdc.py
-│   ├── 02_dedupe_meshes.py
-│   ├── 03_blender_import_bake.py
-│   ├── 04_blender_export.py
-│   ├── 05_qa_validate.py
-│   └── run_pipeline.py
-├── config.yaml            # Pipeline configuration
-└── README.md
+├── pipeline.py            # UNIFIED ENTRY POINT
+├── config.yaml            # Configuration
+├── run_all.sh/.bat        # Shell wrappers
+│
+├── core/                  # Essential modules
+│   ├── core_extract.py    # RenderDoc extraction
+│   ├── core_process.py    # Mesh deduplication
+│   ├── core_blender.py    # Blender processing
+│   ├── core_gltf.py       # glTF 2.0 export
+│   ├── core_usd.py        # USD export
+│   ├── core_validate.py   # Output validation
+│   ├── core_camera.py     # Coordinate transforms
+│   └── core_types.py      # Type definitions
+│
+├── extras/                # Advanced features (optional)
+│   ├── batch.py           # Human-supervised batch processing
+│   ├── depth.py           # ReShade depth reconstruction
+│   ├── ninja.py           # Ninja Ripper DX9 support
+│   ├── quality.py         # QA metrics (SSIM, IoU)
+│   ├── texture.py         # DDS conversion
+│   └── ...                # More utilities
+│
+├── captures/              # Input: .rdc files
+├── export/                # Intermediate: extracted data
+├── library/               # Deduplicated meshes
+└── targets/               # Output: glTF, USD, Blender files
 ```
-
-## Pipeline Steps in Detail
-
-### Step 1: RenderDoc Extraction
-
-Extracts post-VS (world-space) geometry and textures from .rdc captures.
-
-```bash
-# Run inside RenderDoc's Python environment:
-renderdoccmd python scripts/01_extract_from_rdc.py \
-  --rdc captures/scene.rdc \
-  --out export
-```
-
-**Output:**
-- `Meshes/*.obj` - Post-VS geometry (already in world space)
-- `Textures/final.png` - Final color buffer
-- `Textures/gbuffer_*.png` - G-buffer targets (if deferred)
-- `scene.json` - Index of extracted assets
-
-### Step 2: Mesh Deduplication
-
-Removes duplicate geometry using geometry hashing.
-
-```bash
-python scripts/02_dedupe_meshes.py \
-  export/scene/Meshes \
-  library/index.json \
-  --copy-to library/meshes
-```
-
-**Key Features:**
-- Conservative deduplication (only exact matches)
-- LOD filtering (keeps highest-poly at each location)
-- Preserves UV seams (face-corner UVs)
-
-### Step 3: Blender Import and Bake
-
-Imports meshes, creates materials, and bakes captured color.
-
-```bash
-blender -b --python scripts/03_blender_import_bake.py -- \
-  --meshes library/meshes \
-  --color export/scene/Textures/final.png \
-  --out targets/blender/scene.blend \
-  --bake-res 2048 \
-  --scale 0.01
-```
-
-**Options:**
-- `--meshes DIR` - Directory with OBJ files
-- `--color PATH` - Color image to bake (final.png or gbuffer_0.png)
-- `--camera PATH` - Camera JSON (optional)
-- `--bake-res N` - Bake texture resolution (default: 2048)
-- `--scale N` - Scale factor (0.01 = UE4 cm → Blender m)
-- `--no-bake` - Skip baking, just import geometry
-
-### Step 4: Export
-
-Exports to glTF 2.0 and USD formats.
-
-```bash
-blender -b scene.blend --python scripts/04_blender_export.py -- \
-  --gltf targets/gltf/scene.glb \
-  --usd targets/usd/scene.usdc \
-  --unlit \
-  --embed
-```
-
-**Options:**
-- `--gltf PATH` - Export to glTF (.glb or .gltf)
-- `--usd PATH` - Export to USD (.usdc or .usda)
-- `--unlit` - Use unlit materials (baked look)
-- `--embed` - Embed textures in GLB
-
-### Step 5: QA Validation
-
-Validates reconstruction quality.
-
-```bash
-python scripts/05_qa_validate.py \
-  captures/reference.png \
-  qa/rendered.png \
-  qa/report.json
-```
-
-**Metrics:**
-- **Silhouette IoU** (≥0.92): Edge-based geometry match
-- **SSIM** (≥0.80): Structural similarity
 
 ## Key Concepts
 
-### Post-VS Mesh Export
-Geometry exported **after the vertex shader** is already transformed to world
-space. This eliminates transform puzzles and ensures meshes align correctly.
+### Post-VS Extraction
+Geometry exported **after vertex shader** is already in world space - no transform puzzles.
 
 ### Baked Color
-Instead of reconstructing complex PBR materials, we bake the captured final
-color onto the geometry. This gives a "what you saw" look that always imports
-correctly.
+Instead of PBR reconstruction, bake captured final color onto geometry. Always imports correctly.
 
-### Unit Conversion
-- **UE4**: 1 Unreal Unit = 1 centimeter
-- **Blender**: 1 unit = 1 meter
-- **Scale factor**: 0.01 (UE4 cm → Blender m)
+### Units
+- UE4: 1 unit = 1 cm
+- Blender/glTF: 1 unit = 1 m
+- Default scale: 0.01
 
-### Coordinate Systems
-- **UE4**: Left-handed, Z-up
-- **Blender**: Right-handed, Z-up
-- **glTF**: Right-handed, Y-up
-- Exporters handle conversion automatically
+### Coordinates
+```
+UE4:     Left-handed, Z-up, X-forward
+Blender: Right-handed, Z-up, Y-forward
+glTF:    Right-handed, Y-up, Z-forward
+```
 
 ## Configuration
 
-Edit `config.yaml` to customize:
+Edit `config.yaml`:
 
 ```yaml
-# Units
 units:
-  scale_factor: 0.01  # UE4 cm -> Blender m
+  scale_factor: 0.01
 
-# Baking
 bake:
   resolution: 2048
-  uv_margin: 0.02
 
-# QA thresholds
-qa:
-  silhouette_iou_threshold: 0.92
-  ssim_threshold: 0.80
+tools:
+  blender: blender
+  python: python
 ```
 
 ## Troubleshooting
 
-### Meshes appear mirrored
-- Check coordinate system conversion in import
-- Try flipping scale on one axis and recalculating normals
+| Issue | Solution |
+|-------|----------|
+| Meshes mirrored | Check scale axis, recalculate normals |
+| Wrong scale | Verify `--scale 0.01` |
+| RenderDoc won't attach | Launch via RenderDoc, disable overlays |
+| Washed out colors | Use correct capture image (final.png) |
 
-### Scale is wrong
-- Verify `--scale` argument (default 0.01)
-- Check if your UE4 project uses non-standard units
+## Advanced Features
 
-### Baked colors look washed out
-- Ensure you're baking from the correct image (final.png or gbuffer_0.png)
-- Check if the game uses HDR/tonemapping that affects the capture
-
-### RenderDoc won't attach
-- Try launching game through RenderDoc instead of attaching
-- Disable overlays (Steam, GeForce Experience)
-- Use DX11 mode if available (`-d3d11` launch option)
-
-### QA validation fails
-- **Low Silhouette IoU**: Camera FOV mismatch - adjust camera settings
-- **Low SSIM**: Colors differ - normal for baked vs original lighting
+See `extras/` for:
+- Batch processing with human review checkpoints
+- Ninja Ripper support (DX9 fallback)
+- ReShade depth capture reconstruction
+- QA validation metrics
 
 ## License
 
-This pipeline is provided for educational and personal use. Be mindful of
-game asset usage terms when extracting content from commercial games.
+For educational and personal use. Respect game asset usage terms.

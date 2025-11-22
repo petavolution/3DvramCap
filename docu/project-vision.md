@@ -336,43 +336,52 @@ Use `core_merge` for combining meshes from multiple captures.
 
 ---
 
-## Project Structure
+## Project Structure (Optimized)
 
 ```
 3DvramCap/
 ├── capture_pipeline/
-│   ├── captures/              # Input: RenderDoc .rdc files
-│   ├── export/                # Intermediate: extracted meshes/textures
-│   │   └── <scene_name>/
-│   │       ├── Meshes/        # Post-VS OBJ files
-│   │       ├── Textures/      # Final color, G-buffer
-│   │       └── scene.json     # Extraction manifest
-│   ├── library/               # Deduplicated canonical meshes
-│   │   ├── meshes/
-│   │   └── mesh_index.json
-│   ├── targets/               # Final exports
-│   │   ├── blender/           # .blend files
-│   │   ├── gltf/              # .glb/.gltf files
-│   │   └── usd/               # .usdc/.usda files
-│   ├── qa/                    # Validation reports
-│   ├── core/                  # Core modules
-│   │   ├── core_extract.py    # RenderDoc extraction
-│   │   ├── core_process.py    # Mesh deduplication
-│   │   ├── core_blender.py    # Blender processing
-│   │   ├── core_gltf.py       # Direct glTF export
-│   │   ├── core_usd.py        # Direct USD export
-│   │   ├── core_validate.py   # Export validation
-│   │   ├── core_batch.py      # Batch processing
-│   │   ├── core_camera.py     # Coordinate transforms
-│   │   ├── core_types.py      # Shared data structures
-│   │   └── ...                # Additional utilities
-│   ├── scripts/               # High-level pipeline scripts
-│   │   ├── run_pipeline.py    # Main orchestrator
-│   │   └── 01-09_*.py         # Individual steps
+│   ├── pipeline.py            # UNIFIED ENTRY POINT - all commands
 │   ├── config.yaml            # Pipeline configuration
-│   └── README.md              # Usage documentation
+│   ├── run_all.sh/.bat        # Shell wrappers
+│   │
+│   ├── core/                  # ESSENTIAL MODULES (8 files)
+│   │   ├── core_extract.py    # RenderDoc capture extraction
+│   │   ├── core_process.py    # Mesh deduplication
+│   │   ├── core_blender.py    # Blender import/bake/export
+│   │   ├── core_gltf.py       # Direct glTF 2.0 export
+│   │   ├── core_usd.py        # Direct USD export
+│   │   ├── core_validate.py   # Output validation
+│   │   ├── core_camera.py     # Coordinate transforms
+│   │   └── core_types.py      # Type definitions
+│   │
+│   ├── extras/                # ADVANCED FEATURES (optional)
+│   │   ├── batch.py           # Human-supervised batch processing
+│   │   ├── depth.py           # ReShade depth reconstruction
+│   │   ├── ninja.py           # Ninja Ripper DX9 support
+│   │   ├── quality.py         # QA metrics (SSIM, IoU)
+│   │   ├── texture.py         # DDS conversion, texture tools
+│   │   ├── materials.py       # PBR material classification
+│   │   ├── atlas.py           # Texture atlas packing
+│   │   └── scripts_legacy/    # Deprecated numbered scripts
+│   │
+│   ├── captures/              # Input: .rdc files
+│   ├── export/                # Intermediate: extracted data
+│   ├── library/               # Deduplicated meshes
+│   └── targets/               # Output: glTF, USD, Blender
+│
 └── docu/                      # Project documentation
     └── project-vision.md      # This document
+```
+
+### Simplified Execution Flow
+
+```
+python pipeline.py extract-cmd <capture.rdc>   # Show RenderDoc command
+python pipeline.py run <scene_dir>             # Full pipeline
+python pipeline.py process <meshes>            # Deduplicate only
+python pipeline.py export <meshes> --gltf out  # Export only
+python pipeline.py validate <path>             # Validate outputs
 ```
 
 ---
@@ -397,6 +406,6 @@ The checkpoint-based batch processing ensures human oversight where it matters, 
 
 ---
 
-*Document Version: 1.0*
+*Document Version: 1.1*
 *Last Updated: 2025-11-22*
-*Based on codebase audit of capture_pipeline/*
+*Optimized structure: unified entry point, core/extras separation*

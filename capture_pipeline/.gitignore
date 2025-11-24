@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pipeline outputs (keep in .gitignore for repo cleanliness)
+# Uncomment if you want to track these
+# captures/
+# export/
+# library/
+# targets/
+# qa/
+
+# Logs
+debug-log.txt
+*.log
+
+# Test artifacts
+.pytest_cache/
+test_report.json

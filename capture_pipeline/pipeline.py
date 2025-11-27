@@ -97,6 +97,145 @@ def load_config(config_path: str = None) -> dict:
 
 
 # =============================================================================
+# Pre-flight Validation
+# =============================================================================
+
+def check_dependency(name: str, command: str = None, import_test: str = None) -> bool:
+    """
+    Check if a dependency is available.
+
+    Args:
+        name: Dependency name (for error messages)
+        command: Shell command to test (e.g., 'blender --version')
+        import_test: Python module to try importing
+
+    Returns:
+        True if available, False otherwise
+    """
+    if command:
+        # Test shell command
+        try:
+            subprocess.run(command.split()[0:1], capture_output=True, timeout=5)
+            logger.debug(f"Dependency OK: {name}")
+            return True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            logger.error(f"Dependency missing: {name}")
+            logger.error(f"  Command '{command.split()[0]}' not found in PATH")
+            return False
+
+    if import_test:
+        # Test Python import
+        try:
+            __import__(import_test)
+            logger.debug(f"Dependency OK: {name} (import {import_test})")
+            return True
+        except ImportError:
+            logger.error(f"Dependency missing: {name}")
+            logger.error(f"  Install with: pip install {import_test}")
+            return False
+
+    return True
+
+
+def validate_preflight(command: str, args, config: dict) -> bool:
+    """
+    Validate dependencies and paths before running a command.
+
+    Returns:
+        True if all checks pass, False otherwise
+    """
+    logger.debug(f"Pre-flight validation for command: {command}")
+
+    # Common checks
+    if command in ['process']:
+        # Check numpy for mesh processing
+        if not check_dependency('numpy', import_test='numpy'):
+            logger.warning("numpy not available - mesh processing will be slower")
+
+    if command in ['export']:
+        # Check Blender executable
+        blender_cmd = config.get('blender', 'blender')
+        if not check_dependency('Blender', command=f'{blender_cmd} --version'):
+            return False
+
+    if command == 'run':
+        # Full pipeline - check everything
+        if not check_dependency('numpy', import_test='numpy'):
+            logger.warning("numpy not available - processing will be slower")
+
+        blender_cmd = config.get('blender', 'blender')
+        if not check_dependency('Blender', command=f'{blender_cmd} --version'):
+            return False
+
+        # Validate scene directory structure
+        scene_path = Path(args.scene_dir)
+        if not scene_path.exists():
+            logger.error(f"Scene directory not found: {scene_path}")
+            return False
+
+        mesh_dir = scene_path / 'Meshes'
+        if not mesh_dir.exists():
+            logger.error(f"Meshes directory not found: {mesh_dir}")
+            logger.error("Run RenderDoc extraction first (use: pipeline.py extract-cmd)")
+            return False
+
+        # Count OBJ files
+        obj_files = list(mesh_dir.glob("**/*.obj"))
+        if not obj_files:
+            logger.error(f"No OBJ files found in {mesh_dir}")
+            return False
+
+        logger.info(f"Found {len(obj_files)} OBJ files to process")
+
+    if command == 'process':
+        # Check input directory exists
+        input_path = Path(args.input_dir)
+        if not input_path.exists():
+            logger.error(f"Input directory not found: {input_path}")
+            return False
+
+        # Check for OBJ files
+        obj_files = list(input_path.glob("**/*.obj"))
+        if not obj_files:
+            logger.error(f"No OBJ files found in {input_path}")
+            return False
+
+        logger.info(f"Found {len(obj_files)} OBJ files to process")
+
+    if command == 'export':
+        # Check mesh directory
+        mesh_path = Path(args.mesh_dir)
+        if not mesh_path.exists():
+            logger.error(f"Mesh directory not found: {mesh_path}")
+            return False
+
+        # Check for meshes
+        obj_files = list(mesh_path.glob("**/*.obj"))
+        if not obj_files:
+            logger.error(f"No OBJ files found in {mesh_path}")
+            return False
+
+        logger.info(f"Found {len(obj_files)} OBJ files to export")
+
+        # Validate color image if provided
+        if args.color:
+            color_path = Path(args.color)
+            if not color_path.exists():
+                logger.error(f"Color image not found: {color_path}")
+                return False
+
+    if command == 'validate':
+        # Check path exists
+        path = Path(args.path)
+        if not path.exists():
+            logger.error(f"Path not found: {path}")
+            return False
+
+    logger.debug("Pre-flight validation passed")
+    return True
+
+
+# =============================================================================
 # Pipeline Steps
 # =============================================================================
 
@@ -342,7 +481,11 @@ Examples:
     try:
         config = load_config(getattr(args, 'config', None))
 
-        if args.command == 'run':
+        # Pre-flight validation
+        if not validate_preflight(args.command, args, config):
+            logger.error("Pre-flight validation failed")
+            success = False
+        elif args.command == 'run':
             success = cmd_run_pipeline(args.scene_dir, args.targets, config)
 
         elif args.command == 'extract-cmd':

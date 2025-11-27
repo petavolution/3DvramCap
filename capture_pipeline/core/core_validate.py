@@ -24,6 +24,22 @@ import os
 import sys
 from pathlib import Path
 
+# Import logging utilities
+try:
+    from core.utils import logger, log_error
+    HAS_LOGGING = True
+except ImportError:
+    # Fallback if utils not available
+    import logging
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+    HAS_LOGGING = False
+    def log_error(msg, exception=None, context=None):
+        if exception:
+            logger.error(f"{msg}: {exception}")
+        else:
+            logger.error(msg)
+
 # Optional dependencies
 try:
     import numpy as np
@@ -305,10 +321,10 @@ def validate_directory(dir_path):
     for pattern in patterns:
         files.extend(dir_path.glob(f"**/{pattern}"))
 
-    print(f"Found {len(files)} files to validate")
+    logger.info(f"Found {len(files)} files to validate")
 
     for filepath in sorted(files):
-        print(f"  Validating: {filepath.name}")
+        logger.debug(f"Validating: {filepath.name}")
         result = validate_file(str(filepath))
         results.append(result)
 
@@ -316,27 +332,35 @@ def validate_directory(dir_path):
 
 
 def print_result(result):
-    """Print validation result to console."""
+    """Print validation result to console and log."""
     status = "PASS" if result.passed else "FAIL"
     status_color = "\033[32m" if result.passed else "\033[31m"
     reset = "\033[0m"
 
+    # Console output with colors
     print(f"\n{status_color}[{status}]{reset} {result.filename}")
+
+    # Also log without colors
+    logger.info(f"[{status}] {result.filename}")
 
     # Info
     if result.info:
         for key, value in result.info.items():
             print(f"  {key}: {value}")
+            logger.debug(f"  {key}: {value}")
 
     # Errors
     for err in result.errors:
         print(f"  \033[31mERROR: {err}\033[0m")
+        logger.error(f"  {result.filename}: {err}")
 
     # Warnings
     for warn in result.warnings[:3]:  # Limit warnings shown
         print(f"  \033[33mWARN: {warn}\033[0m")
+        logger.warning(f"  {result.filename}: {warn}")
     if len(result.warnings) > 3:
         print(f"  ... and {len(result.warnings) - 3} more warnings")
+        logger.debug(f"  {result.filename}: {len(result.warnings) - 3} more warnings")
 
 
 def main():
@@ -353,19 +377,19 @@ def main():
     results = []
 
     if args.gltf:
-        print(f"Validating glTF: {args.gltf}")
+        logger.info(f"Validating glTF: {args.gltf}")
         results.append(validate_file(args.gltf))
 
     if args.usd:
-        print(f"Validating USD: {args.usd}")
+        logger.info(f"Validating USD: {args.usd}")
         results.append(validate_file(args.usd))
 
     if args.dir:
-        print(f"Validating directory: {args.dir}")
+        logger.info(f"Validating directory: {args.dir}")
         results.extend(validate_directory(args.dir))
 
     if not results:
-        print("No files to validate. Use --gltf, --usd, or --dir")
+        logger.warning("No files to validate. Use --gltf, --usd, or --dir")
         sys.exit(0)
 
     # Print results
@@ -380,6 +404,8 @@ def main():
     print(f"Summary: {passed} passed, {failed} failed")
     print(f"{'='*50}")
 
+    logger.info(f"Validation summary: {passed} passed, {failed} failed out of {len(results)} total")
+
     # Save report if requested
     if args.output:
         report = {
@@ -393,6 +419,7 @@ def main():
         with open(args.output, 'w') as f:
             json.dump(report, f, indent=2)
         print(f"\nReport saved: {args.output}")
+        logger.info(f"Report saved: {args.output}")
 
     # Exit with error if any failed
     if failed > 0:

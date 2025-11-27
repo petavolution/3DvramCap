@@ -24,12 +24,28 @@ import shutil
 import sys
 from pathlib import Path
 
+# Import logging utilities
+try:
+    from core.utils import logger, log_error
+    HAS_LOGGING = True
+except ImportError:
+    # Fallback if utils not available
+    import logging
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+    HAS_LOGGING = False
+    def log_error(msg, exception=None, context=None):
+        if exception:
+            logger.error(f"{msg}: {exception}")
+        else:
+            logger.error(msg)
+
 try:
     import numpy as np
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
-    print("WARNING: numpy not installed. Install with: pip install numpy")
+    logger.warning("numpy not installed. Install with: pip install numpy")
 
 
 def parse_obj_file(filepath):
@@ -72,7 +88,7 @@ def parse_obj_file(filepath):
                         faces.append(face)
 
     except Exception as e:
-        print(f"  Error parsing {filepath}: {e}")
+        log_error(f"Error parsing {filepath}", exception=e)
         return None
 
     if len(vertices) < 3 or len(faces) < 1:
@@ -185,19 +201,20 @@ def deduplicate_meshes(input_dir, output_dir, min_vertices=50):
 
     # Find all OBJ files
     obj_files = list(input_path.glob("**/*.obj"))
-    print(f"Found {len(obj_files)} OBJ files")
+    logger.info(f"Found {len(obj_files)} OBJ files")
 
     if not obj_files:
+        logger.error("No OBJ files found in input directory")
         return {'error': 'No OBJ files found'}
 
     # Parse and hash all meshes
     mesh_groups = {}  # hash -> list of (mesh_data, vertex_count)
     skipped = {'invalid': 0, 'parse_error': 0}
 
-    print("Parsing meshes...")
+    logger.info("Parsing meshes...")
     for i, obj_path in enumerate(obj_files):
         if (i + 1) % 100 == 0:
-            print(f"  Processing {i + 1}/{len(obj_files)}...")
+            logger.debug(f"Processing {i + 1}/{len(obj_files)}...")
 
         mesh_data = parse_obj_file(obj_path)
         if mesh_data is None:
@@ -237,11 +254,11 @@ def deduplicate_meshes(input_dir, output_dir, min_vertices=50):
         })
         duplicate_count += len(group) - 1
 
-    print(f"  Unique meshes: {len(unique_meshes)}")
-    print(f"  Duplicates removed: {duplicate_count}")
+    logger.info(f"Unique meshes: {len(unique_meshes)}")
+    logger.info(f"Duplicates removed: {duplicate_count}")
 
     # Copy unique meshes to output
-    print("Copying unique meshes...")
+    logger.info("Copying unique meshes...")
     results = {
         'input_dir': str(input_dir),
         'output_dir': str(output_dir),
@@ -282,10 +299,10 @@ def deduplicate_meshes(input_dir, output_dir, min_vertices=50):
     with open(index_path, 'w') as f:
         json.dump(results, f, indent=2)
 
-    print(f"\nDeduplication complete!")
-    print(f"  Output: {output_path}")
-    print(f"  Unique meshes: {len(unique_meshes)}")
-    print(f"  Index: {index_path}")
+    logger.info("Deduplication complete!")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Unique meshes: {len(unique_meshes)}")
+    logger.info(f"Index: {index_path}")
 
     return results
 
@@ -308,13 +325,13 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
-        print(f"ERROR: Input directory not found: {args.input}")
+        logger.error(f"Input directory not found: {args.input}")
         sys.exit(1)
 
     results = deduplicate_meshes(args.input, args.output, args.min_vertices)
 
     if 'error' in results:
-        print(f"ERROR: {results['error']}")
+        logger.error(results['error'])
         sys.exit(1)
 
 
